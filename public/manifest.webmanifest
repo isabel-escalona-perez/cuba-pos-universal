@@ -1,0 +1,17 @@
+{
+  "name": "Cuba POS Universal",
+  "short_name": "CubaPOS",
+  "description": "POS, Inventario y Arqueo para actores económicos cubanos",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f766e",
+  "theme_color": "#0f766e",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
