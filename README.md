@@ -10,13 +10,37 @@ Aplicación profesional **offline-first** para actores económicos cubanos (mipy
 - Preparado para Transfermóvil y EnZona
 - APK objetivo ≤ 50 MB
 
-## Requisitos para generar el APK
+## Generar APK automáticamente con GitHub Actions
+
+El repositorio incluye un workflow que genera el APK en cada **Release**.
+
+### Cómo usarlo
+
+1. Ve a **Releases** → **Create a new release**
+2. Crea un tag (ej. `v0.1.0`) y publica el release
+3. El workflow se ejecuta automáticamente
+4. Cuando termine, el APK aparece:
+   - Como **asset** del propio Release
+   - Como **artifact** en la pestaña Actions (disponible 30 días)
+
+También puedes lanzarlo manualmente:
+- Pestaña **Actions** → **Build Android APK** → **Run workflow**
+
+O creando un tag:
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+> **Nota**: el APK de release se genera **sin firmar**. Para distribución pública necesitas firmarlo con tu keystore.
+
+## Requisitos para generar el APK localmente
 
 1. Node.js 18+
 2. Android Studio (o Android SDK + JDK 17)
 3. Variables de entorno `ANDROID_HOME` configuradas
 
-## Instalación y build del APK
+## Instalación y build del APK (local)
 
 ```bash
 # 1. Clonar
@@ -98,7 +122,7 @@ src/
 2. Implementar motor de sincronización bidireccional real
 3. Integrar plugins de impresora térmica y lector de códigos
 4. Añadir stubs de Transfermóvil / EnZona con interfaces
-5. Configurar GitHub Actions para generar APK automáticamente en cada release
+5. Firmar el APK de release con un keystore propio
 
 ## Licencia
 
