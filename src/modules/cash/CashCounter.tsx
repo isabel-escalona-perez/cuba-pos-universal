@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'preact/hooks';
+import { enqueue } from '../../offline/syncEngine';
 
 const CUP_DENOMS = [
   { value: 1000, label: '1000 CUP' },
@@ -44,6 +45,20 @@ export function CashCounter() {
 
   const setQty = (value: number, qty: number) => {
     setCounts(prev => ({ ...prev, [value]: Math.max(0, qty) }));
+  };
+
+  const save = async () => {
+    const count = {
+      id: crypto.randomUUID(),
+      currency,
+      total,
+      expected,
+      difference: diff,
+      denominations: { ...counts },
+      createdAt: Date.now(),
+    };
+    await enqueue('cash_count', count);
+    alert(`Arqueo guardado offline\nTotal: ${total.toFixed(2)} ${currency}\nDiferencia: ${diff.toFixed(2)}`);
   };
 
   return (
@@ -98,8 +113,7 @@ export function CashCounter() {
             {diff >= 0 ? '+' : ''}{diff.toFixed(2)} {currency}
           </span>
         </div>
-        <button class="btn btn-block" style={{ marginTop: 16 }}
-          onClick={() => alert(`Arqueo guardado offline\nTotal: ${total.toFixed(2)} ${currency}\nDiferencia: ${diff.toFixed(2)}`)}>
+        <button class="btn btn-block" style={{ marginTop: 16 }} onClick={save}>
           Guardar arqueo
         </button>
       </div>
