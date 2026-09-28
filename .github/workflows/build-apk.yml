@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build-apk:
-    name: Build debug/release APK
+    name: Build unsigned APKs
     runs-on: ubuntu-latest
 
     steps:
@@ -58,40 +58,12 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      # ---------- Firma automática (opcional) ----------
-      - name: Decode keystore (si existen secrets)
-        if: ${{ secrets.SIGNING_KEY != '' }}
-        run: |
-          echo "${{ secrets.SIGNING_KEY }}" | base64 -d > android/app/release-key.jks
-          echo "Keystore decodificado"
-
-      - name: Configure signing in build.gradle
-        if: ${{ secrets.SIGNING_KEY != '' }}
-        run: |
-          # Añadir signingConfigs al final de android { } en app/build.gradle
-          cat >> android/app/build.gradle << 'GRADLE'
-
-          android.signingConfigs {
-              release {
-                  storeFile file('release-key.jks')
-                  storePassword System.getenv("KEYSTORE_PASSWORD")
-                  keyAlias System.getenv("KEY_ALIAS")
-                  keyPassword System.getenv("KEY_PASSWORD")
-              }
-          }
-          android.buildTypes.release.signingConfig android.signingConfigs.release
-          GRADLE
-
-      - name: Build Debug APK
+      - name: Build Debug APK (unsigned)
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Build Release APK (firmado si hay secrets)
+      - name: Build Release APK (unsigned)
         working-directory: android
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon --stacktrace
         continue-on-error: true
 
@@ -128,13 +100,7 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "### Resultado del build" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -n "${{ secrets.SIGNING_KEY }}" ]; then
-            echo "- **Firma**: activada (secrets detectados)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- **Firma**: no configurada (APK unsigned)" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "### APKs generados (sin firmar)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           find android/app/build/outputs -name "*.apk" -type f 2>/dev/null | while read f; do
             echo "- $f ($(du -h "$f" | cut -f1))" >> $GITHUB_STEP_SUMMARY
