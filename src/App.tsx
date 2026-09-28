@@ -5,8 +5,10 @@ import { POS } from './modules/pos/POS';
 import { CashCounter } from './modules/cash/CashCounter';
 import { Dashboard } from './modules/dashboard/Dashboard';
 import { Settings } from './modules/settings/Settings';
+import { Inventory } from './modules/inventory/Inventory';
 import { NetworkStatus } from './components/NetworkStatus';
 import { isOnboardingCompleted } from './lib/storage';
+import { startAutoSync } from './offline/syncEngine';
 
 export function App() {
   const [ready, setReady] = useState(false);
@@ -17,6 +19,7 @@ export function App() {
       const done = await isOnboardingCompleted();
       setOnboarded(done);
       setReady(true);
+      if (done) startAutoSync();
     })();
   }, []);
 
@@ -30,7 +33,14 @@ export function App() {
   }
 
   if (!onboarded) {
-    return <OnboardingWizard onComplete={() => setOnboarded(true)} />;
+    return (
+      <OnboardingWizard
+        onComplete={() => {
+          setOnboarded(true);
+          startAutoSync();
+        }}
+      />
+    );
   }
 
   return (
@@ -39,12 +49,14 @@ export function App() {
       <Router>
         <Route path="/" component={Dashboard} />
         <Route path="/pos" component={POS} />
+        <Route path="/inventory" component={Inventory} />
         <Route path="/cash" component={CashCounter} />
         <Route path="/settings" component={Settings} />
       </Router>
       <nav class="bottom-nav">
         <a href="/">Inicio</a>
         <a href="/pos">POS</a>
+        <a href="/inventory">Inventario</a>
         <a href="/cash">Arqueo</a>
         <a href="/settings">Ajustes</a>
       </nav>
