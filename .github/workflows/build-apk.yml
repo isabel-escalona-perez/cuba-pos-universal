@@ -37,15 +37,26 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      # === Android SDK setup (moderno, sin el paquete 'tools' deprecado) ===
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ''   # no instalamos nada aquí para evitar el error de 'tools'
 
-      - name: Accept Android licenses
-        run: yes | sdkmanager --licenses || true
-
-      - name: Install required Android SDK packages
+      - name: Install Android SDK components (solo los necesarios)
         run: |
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          # Usamos cmdline-tools actuales (ya instalados por la action)
+          yes | sdkmanager --licenses > /dev/null || true
+
+          # Solo paquetes modernos (sin 'tools')
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
+
+          # Verificación
+          echo "SDK instalado en: $ANDROID_HOME"
+          sdkmanager --list_installed | head -20
 
       - name: Add Capacitor Android platform
         run: |
@@ -65,7 +76,7 @@ jobs:
         continue-on-error: true
 
       - name: List generated APKs
-        run: find android/app/build/outputs -name "*.apk" -type f
+        run: find android/app/build/outputs -name "*.apk" -type f || true
 
       - name: Upload Debug APK as artifact
         uses: actions/upload-artifact@v4
@@ -73,10 +84,11 @@ jobs:
           name: cuba-pos-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
+          if-no-files-found: warn
 
       - name: Upload Release APK as artifact
         uses: actions/upload-artifact@v4
-        if: success() || failure()
+        if: always()
         with:
           name: cuba-pos-release-apk
           path: android/app/build/outputs/apk/release/*.apk
@@ -94,10 +106,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Summary
+        if: always()
         run: |
-          echo "### APK generado correctamente" >> $GITHUB_STEP_SUMMARY
+          echo "### Resultado del build" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Debug APK**: disponible como artifact y en el Release" >> $GITHUB_STEP_SUMMARY
-          echo "- **Release APK**: unsigned (para firmarlo usa tu keystore)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Descarga el artifact desde la pestaña Actions o desde el Release." >> $GITHUB_STEP_SUMMARY
+          find android/app/build/outputs -name "*.apk" -type f 2>/dev/null | while read f; do
+            echo "- $f ($(du -h "$f" | cut -f1))" >> $GITHUB_STEP_SUMMARY
+          done || echo "No se generó ningún APK" >> $GITHUB_STEP_SUMMARY
