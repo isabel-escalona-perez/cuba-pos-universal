@@ -1,0 +1,53 @@
+import { useState, useEffect } from 'preact/hooks';
+import { Router, Route } from 'preact-router';
+import { OnboardingWizard } from './modules/onboarding/OnboardingWizard';
+import { POS } from './modules/pos/POS';
+import { CashCounter } from './modules/cash/CashCounter';
+import { Dashboard } from './modules/dashboard/Dashboard';
+import { Settings } from './modules/settings/Settings';
+import { NetworkStatus } from './components/NetworkStatus';
+import { isOnboardingCompleted } from './lib/storage';
+
+export function App() {
+  const [ready, setReady] = useState(false);
+  const [onboarded, setOnboarded] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const done = await isOnboardingCompleted();
+      setOnboarded(done);
+      setReady(true);
+    })();
+  }, []);
+
+  if (!ready) {
+    return (
+      <div class="loading-screen">
+        <div class="spinner"></div>
+        <p>Cargando Cuba POS…</p>
+      </div>
+    );
+  }
+
+  if (!onboarded) {
+    return <OnboardingWizard onComplete={() => setOnboarded(true)} />;
+  }
+
+  return (
+    <div class="app-shell">
+      <NetworkStatus />
+      <Router>
+        <Route path="/" component={Dashboard} />
+        <Route path="/pos" component={POS} />
+        <Route path="/cash" component={CashCounter} />
+        <Route path="/settings" component={Settings} />
+      </Router>
+      <nav class="bottom-nav">
+        <a href="/">Inicio</a>
+        <a href="/pos">POS</a>
+        <a href="/cash">Arqueo</a>
+        <a href="/settings">Ajustes</a>
+      </nav>
+    </div>
+  );
+}
