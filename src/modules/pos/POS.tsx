@@ -5,6 +5,7 @@ import {
 } from '../../lib/storage';
 import { enqueue } from '../../offline/syncEngine';
 import { showToast } from '../../lib/toast';
+import { newId } from '../../lib/id';
 
 interface CartItem {
   id: string;
@@ -23,6 +24,7 @@ export function POS() {
   const [shiftOpen, setShiftOpen] = useState(false);
   const [showOpenShift, setShowOpenShift] = useState(false);
   const [floatCUP, setFloatCUP] = useState(0);
+  const [opening, setOpening] = useState(false);
   const [showPay, setShowPay] = useState(false);
   const [discount, setDiscount] = useState(0);
   const [paidCUP, setPaidCUP] = useState(0);
@@ -33,14 +35,19 @@ export function POS() {
   const [showReceipt, setShowReceipt] = useState(false);
 
   const reload = async () => {
-    const list = await getAllProducts();
-    setProducts(list.filter(p => p.active !== false));
-    const shift = await getOpenShift();
-    setShiftOpen(!!shift);
-    if (!shift) setShowOpenShift(true);
-    const s = await getSettings();
-    if (s.rateUSDToCUP) setRate(s.rateUSDToCUP);
-    if (s.businessName) setBusinessName(s.businessName);
+    try {
+      const list = await getAllProducts();
+      setProducts(list.filter(p => p.active !== false));
+      const shift = await getOpenShift();
+      setShiftOpen(!!shift);
+      if (!shift) setShowOpenShift(true);
+      const s = await getSettings();
+      if (s.rateUSDToCUP) setRate(s.rateUSDToCUP);
+      if (s.businessName) setBusinessName(s.businessName);
+    } catch (e) {
+      console.error(e);
+      showToast('Error al cargar datos', 'error');
+    }
   };
 
   useEffect(() => { reload(); }, []);
@@ -91,10 +98,22 @@ export function POS() {
   const total = Math.max(0, subtotal - discount);
 
   const doOpenShift = async () => {
-    await openShift(floatCUP, 0);
-    setShiftOpen(true);
-    setShowOpenShift(false);
-    showToast('Turno abierto. ¡A vender!', 'ok');
+    if (opening) return;
+    setOpening(true);
+    try {
+      // Fondo 0 es válido
+      const amount = Number(floatCUP);
+      const safe = Number.isFinite(amount) && amount >= 0 ? amount : 0;
+      await openShift(safe, 0);
+      setShiftOpen(true);
+      setShowOpenShift(false);
+      showToast(safe === 0 ? 'Turno abierto (sin fondo)' : `Turno abierto · fondo ${safe} CUP`, 'ok');
+    } catch (e) {
+      console.error('openShift error', e);
+      showToast('No se pudo abrir el turno. Reintenta.', 'error');
+    } finally {
+      setOpening(false);
+    }
   };
 
   const openPay = () => {
@@ -122,64 +141,81 @@ export function POS() {
       showToast('El pago no cubre el total', 'error');
       return;
     }
-    const shift = await getOpenShift();
-    const sale: Sale = {
-      id: crypto.randomUUID(),
-      shiftId: shift?.id,
-      items: cart.map(c => ({
-        id: c.id, name: c.name, priceCUP: c.priceCUP, priceUSD: c.priceUSD, qty: c.qty,
-      })),
-      currency,
-      subtotal,
-      discount,
-      total,
-      paidCUP,
-      paidUSD,
-      changeCUP: currency === 'CUP' ? changeAmount : changeAmount * rate,
-      paymentMethod: paidCUP > 0 && paidUSD > 0 ? 'mixto' : paidUSD > 0 ? 'efectivo_usd' : 'efectivo_cup',
-      createdAt: Date.now(),
-    };
+    try {
+      const shift = await getOpenShift();
+      const sale: Sale = {
+        id: newId(),
+        shiftId: shift?.id,
+        items: cart.map(c => ({
+          id: c.id, name: c.name, priceCUP: c.priceCUP, priceUSD: c.priceUSD, qty: c.qty,
+        })),
+        currency,
+        subtotal,
+        discount,
+        total,
+        paidCUP,
+        paidUSD,
+        changeCUP: currency === 'CUP' ? changeAmount : changeAmount * rate,
+        paymentMethod: paidCUP > 0 && paidUSD > 0 ? 'mixto' : paidUSD > 0 ? 'efectivo_usd' : 'efectivo_cup',
+        createdAt: Date.now(),
+      };
 
-    await saveSale(sale);
-    await deductStockForSale(sale.items);
-    await enqueue('sale', sale);
+      await saveSale(sale);
+      await deductStockForSale(sale.items);
+      await enqueue('sale', sale);
 
-    const lines = [
-      businessName,
-      new Date(sale.createdAt).toLocaleString('es-CU'),
-      '------------------------',
-      ...sale.items.map(i => `${i.qty}x ${i.name}`),
-      '------------------------',
-      discount > 0 ? `Descuento: -${discount.toFixed(2)}` : '',
-      `TOTAL: ${total.toFixed(2)} ${currency}`,
-      paidCUP > 0 ? `Pagado CUP: ${paidCUP.toFixed(2)}` : '',
-      paidUSD > 0 ? `Pagado USD: ${paidUSD.toFixed(2)}` : '',
-      changeAmount > 0 ? `Cambio: ${changeAmount.toFixed(2)} ${currency}` : '',
-      'Gracias por su compra',
-    ].filter(Boolean).join('\n');
+      const lines = [
+        businessName,
+        new Date(sale.createdAt).toLocaleString('es-CU'),
+        '------------------------',
+        ...sale.items.map(i => `${i.qty}x ${i.name}`),
+        '------------------------',
+        discount > 0 ? `Descuento: -${discount.toFixed(2)}` : '',
+        `TOTAL: ${total.toFixed(2)} ${currency}`,
+        paidCUP > 0 ? `Pagado CUP: ${paidCUP.toFixed(2)}` : '',
+        paidUSD > 0 ? `Pagado USD: ${paidUSD.toFixed(2)}` : '',
+        changeAmount > 0 ? `Cambio: ${changeAmount.toFixed(2)} ${currency}` : '',
+        'Gracias por su compra',
+      ].filter(Boolean).join('\n');
 
-    setLastReceipt(lines);
-    setCart([]);
-    setShowPay(false);
-    setShowReceipt(true);
-    await reload();
-    showToast(`Venta OK · ${total.toFixed(2)} ${currency}`, 'ok');
+      setLastReceipt(lines);
+      setCart([]);
+      setShowPay(false);
+      setShowReceipt(true);
+      await reload();
+      showToast(`Venta OK · ${total.toFixed(2)} ${currency}`, 'ok');
+    } catch (e) {
+      console.error(e);
+      showToast('Error al guardar la venta', 'error');
+    }
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100% - 60px)' }}>
-      <div class={shiftOpen ? 'shift-banner' : 'shift-banner closed'}>
-        {shiftOpen ? '● Turno abierto – puedes vender' : '○ Turno cerrado – ábrelo para vender'}
+      <div
+        class={shiftOpen ? 'shift-banner' : 'shift-banner closed'}
+        onClick={() => { if (!shiftOpen) setShowOpenShift(true); }}
+        style={{ cursor: shiftOpen ? 'default' : 'pointer' }}
+      >
+        {shiftOpen
+          ? '● Turno abierto – puedes vender'
+          : '○ Turno cerrado – toca aquí para abrir (fondo 0 permitido)'}
       </div>
 
       <div class="card" style={{ flex: 1, overflow: 'auto', marginBottom: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 8 }}>
           <h2 style={{ fontSize: 18 }}>Punto de venta</h2>
           <div class="grid-2" style={{ width: 130 }}>
-            <button class={`btn btn-sm ${currency === 'CUP' ? '' : 'btn-secondary'}`} onClick={() => setCurrency('CUP')}>CUP</button>
-            <button class={`btn btn-sm ${currency === 'USD' ? '' : 'btn-secondary'}`} onClick={() => setCurrency('USD')}>USD</button>
+            <button type="button" class={`btn btn-sm ${currency === 'CUP' ? '' : 'btn-secondary'}`} onClick={() => setCurrency('CUP')}>CUP</button>
+            <button type="button" class={`btn btn-sm ${currency === 'USD' ? '' : 'btn-secondary'}`} onClick={() => setCurrency('USD')}>USD</button>
           </div>
         </div>
+
+        {!shiftOpen && (
+          <button type="button" class="btn btn-block" style={{ marginBottom: 12 }} onClick={() => setShowOpenShift(true)}>
+            Abrir turno de caja
+          </button>
+        )}
 
         <input class="input" placeholder="Buscar producto, SKU o código…" value={search}
           onInput={e => setSearch((e.target as HTMLInputElement).value)} style={{ marginBottom: 10 }} />
@@ -193,7 +229,7 @@ export function POS() {
             </div>
           )}
           {filtered.map(p => (
-            <button key={p.id} class="btn btn-secondary" style={{ flexDirection: 'column', height: 78, opacity: p.stock <= 0 ? 0.5 : 1 }}
+            <button type="button" key={p.id} class="btn btn-secondary" style={{ flexDirection: 'column', height: 78, opacity: p.stock <= 0 ? 0.5 : 1 }}
               onClick={() => add(p)}>
               <span style={{ fontSize: 14 }}>{p.name}</span>
               <small>
@@ -215,10 +251,10 @@ export function POS() {
               <div style={{ fontWeight: 600 }}>{i.name}</div>
               <div class="muted">{(currency === 'CUP' ? i.priceCUP : i.priceUSD).toFixed(2)} c/u</div>
             </div>
-            <button class="btn btn-secondary btn-sm" onClick={() => changeQty(i.id, -1)}>−</button>
+            <button type="button" class="btn btn-secondary btn-sm" onClick={() => changeQty(i.id, -1)}>−</button>
             <strong style={{ minWidth: 24, textAlign: 'center' }}>{i.qty}</strong>
-            <button class="btn btn-secondary btn-sm" onClick={() => changeQty(i.id, 1)}>+</button>
-            <button class="btn btn-danger btn-sm" onClick={() => removeItem(i.id)}>×</button>
+            <button type="button" class="btn btn-secondary btn-sm" onClick={() => changeQty(i.id, 1)}>+</button>
+            <button type="button" class="btn btn-danger btn-sm" onClick={() => removeItem(i.id)}>×</button>
           </div>
         ))}
       </div>
@@ -228,22 +264,41 @@ export function POS() {
           <span>Total</span>
           <span>{total.toFixed(2)} {currency}</span>
         </div>
-        <button class="btn btn-block" onClick={openPay} disabled={cart.length === 0}>
+        <button type="button" class="btn btn-block" onClick={openPay} disabled={cart.length === 0}>
           Cobrar
         </button>
       </div>
 
       {showOpenShift && (
-        <div class="modal-backdrop" onClick={() => shiftOpen && setShowOpenShift(false)}>
+        <div class="modal-backdrop">
           <div class="modal-sheet" onClick={e => e.stopPropagation()}>
             <h2 style={{ fontSize: 18, marginBottom: 8 }}>Abrir turno de caja</h2>
-            <p class="muted" style={{ marginBottom: 12 }}>Indica el fondo de caja (efectivo inicial).</p>
+            <p class="muted" style={{ marginBottom: 12 }}>
+              Indica el fondo de caja (efectivo inicial). Puedes dejar <strong>0</strong> si no hay fondo.
+            </p>
             <label class="muted">Fondo en CUP</label>
-            <input class="input" type="number" min="0" value={floatCUP}
-              onInput={e => setFloatCUP(parseFloat((e.target as HTMLInputElement).value) || 0)} style={{ marginBottom: 14 }} />
-            <button class="btn btn-block" onClick={doOpenShift}>Abrir turno</button>
+            <input
+              class="input"
+              type="number"
+              min="0"
+              inputMode="decimal"
+              value={String(floatCUP)}
+              onInput={e => {
+                const v = (e.target as HTMLInputElement).value;
+                if (v === '' || v === '-') {
+                  setFloatCUP(0);
+                  return;
+                }
+                const n = parseFloat(v);
+                setFloatCUP(Number.isFinite(n) && n >= 0 ? n : 0);
+              }}
+              style={{ marginBottom: 14 }}
+            />
+            <button type="button" class="btn btn-block" onClick={doOpenShift} disabled={opening}>
+              {opening ? 'Abriendo…' : 'Abrir turno'}
+            </button>
             {shiftOpen && (
-              <button class="btn btn-secondary btn-block" style={{ marginTop: 8 }} onClick={() => setShowOpenShift(false)}>Cancelar</button>
+              <button type="button" class="btn btn-secondary btn-block" style={{ marginTop: 8 }} onClick={() => setShowOpenShift(false)}>Cancelar</button>
             )}
           </div>
         </div>
@@ -277,8 +332,8 @@ export function POS() {
               </div>
             </div>
             <div class="grid-2">
-              <button class="btn btn-secondary" onClick={() => setShowPay(false)}>Volver</button>
-              <button class="btn" onClick={confirmPay}>Confirmar venta</button>
+              <button type="button" class="btn btn-secondary" onClick={() => setShowPay(false)}>Volver</button>
+              <button type="button" class="btn" onClick={confirmPay}>Confirmar venta</button>
             </div>
           </div>
         </div>
@@ -292,11 +347,11 @@ export function POS() {
               whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 13,
               background: '#f8fafc', padding: 12, borderRadius: 8, marginBottom: 12,
             }}>{lastReceipt}</pre>
-            <button class="btn btn-block" onClick={() => {
+            <button type="button" class="btn btn-block" onClick={() => {
               if (navigator.clipboard) navigator.clipboard.writeText(lastReceipt).then(() => showToast('Ticket copiado', 'ok'));
               setShowReceipt(false);
             }}>Copiar y cerrar</button>
-            <button class="btn btn-secondary btn-block" style={{ marginTop: 8 }} onClick={() => setShowReceipt(false)}>Cerrar</button>
+            <button type="button" class="btn btn-secondary btn-block" style={{ marginTop: 8 }} onClick={() => setShowReceipt(false)}>Cerrar</button>
           </div>
         </div>
       )}
