@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import {
   getAllProducts, Product, getOpenShift, openShift, saveSale, Sale,
-  deductStockForSale, getSettings,
+  deductStockForSale, getSettings, closeOpenShift, getSalesForShift, saleToCUP,
 } from '../../lib/storage';
 import { enqueue } from '../../offline/syncEngine';
 import { showToast } from '../../lib/toast';
@@ -23,8 +23,11 @@ export function POS() {
   const [search, setSearch] = useState('');
   const [shiftOpen, setShiftOpen] = useState(false);
   const [showOpenShift, setShowOpenShift] = useState(false);
+  const [showCloseShift, setShowCloseShift] = useState(false);
   const [floatCUP, setFloatCUP] = useState(0);
   const [opening, setOpening] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [shiftSummary, setShiftSummary] = useState({ salesCount: 0, totalCUP: 0, floatCUP: 0, openedAt: 0 });
   const [showPay, setShowPay] = useState(false);
   const [discount, setDiscount] = useState(0);
   const [paidCUP, setPaidCUP] = useState(0);
@@ -101,7 +104,6 @@ export function POS() {
     if (opening) return;
     setOpening(true);
     try {
-      // Fondo 0 es válido
       const amount = Number(floatCUP);
       const safe = Number.isFinite(amount) && amount >= 0 ? amount : 0;
       await openShift(safe, 0);
@@ -113,6 +115,47 @@ export function POS() {
       showToast('No se pudo abrir el turno. Reintenta.', 'error');
     } finally {
       setOpening(false);
+    }
+  };
+
+  const prepareCloseShift = async () => {
+    try {
+      const shift = await getOpenShift();
+      if (!shift) {
+        showToast('No hay turno abierto', 'info');
+        return;
+      }
+      const s = await getSettings();
+      const r = s.rateUSDToCUP || rate;
+      const sales = await getSalesForShift(shift.id);
+      const totalCUP = sales.reduce((sum, x) => sum + saleToCUP(x, r), 0);
+      setShiftSummary({
+        salesCount: sales.length,
+        totalCUP,
+        floatCUP: shift.openingFloatCUP,
+        openedAt: shift.openedAt,
+      });
+      setShowCloseShift(true);
+    } catch (e) {
+      console.error(e);
+      showToast('Error al preparar cierre', 'error');
+    }
+  };
+
+  const doCloseShift = async () => {
+    if (closing) return;
+    setClosing(true);
+    try {
+      await closeOpenShift();
+      setShiftOpen(false);
+      setShowCloseShift(false);
+      setCart([]);
+      showToast('Turno cerrado', 'ok');
+    } catch (e) {
+      console.error(e);
+      showToast('No se pudo cerrar el turno', 'error');
+    } finally {
+      setClosing(false);
     }
   };
 
@@ -217,6 +260,12 @@ export function POS() {
           </button>
         )}
 
+        {shiftOpen && (
+          <button type="button" class="btn btn-secondary btn-block" style={{ marginBottom: 12 }} onClick={prepareCloseShift}>
+            Cerrar turno
+          </button>
+        )}
+
         <input class="input" placeholder="Buscar producto, SKU o código…" value={search}
           onInput={e => setSearch((e.target as HTMLInputElement).value)} style={{ marginBottom: 10 }} />
 
@@ -300,6 +349,30 @@ export function POS() {
             {shiftOpen && (
               <button type="button" class="btn btn-secondary btn-block" style={{ marginTop: 8 }} onClick={() => setShowOpenShift(false)}>Cancelar</button>
             )}
+          </div>
+        </div>
+      )}
+
+      {showCloseShift && (
+        <div class="modal-backdrop">
+          <div class="modal-sheet">
+            <h2 style={{ fontSize: 18, marginBottom: 8 }}>Cerrar turno</h2>
+            <p class="muted" style={{ marginBottom: 12 }}>Resumen del turno actual antes de cerrar.</p>
+            <div style={{ background: '#f8fafc', borderRadius: 10, padding: 12, marginBottom: 12 }}>
+              <p>Abierto: {shiftSummary.openedAt ? new Date(shiftSummary.openedAt).toLocaleString('es-CU') : '—'}</p>
+              <p>Fondo inicial: <strong>{shiftSummary.floatCUP} CUP</strong></p>
+              <p>Ventas: <strong>{shiftSummary.salesCount}</strong></p>
+              <p>Total vendido: <strong>{shiftSummary.totalCUP.toFixed(0)} CUP</strong></p>
+            </div>
+            <p class="muted" style={{ marginBottom: 12 }}>
+              Después puedes hacer el arqueo en la pestaña Arqueo para contar el efectivo.
+            </p>
+            <div class="grid-2">
+              <button type="button" class="btn btn-secondary" onClick={() => setShowCloseShift(false)} disabled={closing}>Cancelar</button>
+              <button type="button" class="btn btn-danger" onClick={doCloseShift} disabled={closing}>
+                {closing ? 'Cerrando…' : 'Confirmar cierre'}
+              </button>
+            </div>
           </div>
         </div>
       )}
