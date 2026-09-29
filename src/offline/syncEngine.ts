@@ -5,7 +5,7 @@
  * - Resolución simple de conflictos (last-write-wins + reglas de negocio)
  */
 import { Network } from '@capacitor/network';
-import { getOutbox, removeFromOutbox, addToOutbox, getDB } from '../lib/storage';
+import { getOutbox, removeFromOutbox, addToOutbox } from '../lib/storage';
 
 export type SyncStatus = 'idle' | 'syncing' | 'error' | 'offline';
 
@@ -91,14 +91,14 @@ export async function attemptSync() {
 }
 
 /** Simulación de API (reemplazar por fetch real cuando exista backend) */
-async function fakeApiCall(item: OutboxItem): Promise<void> {
+async function fakeApiCall(_item: OutboxItem): Promise<void> {
   // Simula latencia de red
   await new Promise(r => setTimeout(r, 200 + Math.random() * 300));
   // En producción:
   // const res = await fetch(`${API_URL}/sync`, {
   //   method: 'POST',
   //   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-  //   body: JSON.stringify(item),
+  //   body: JSON.stringify(_item),
   // });
   // if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
