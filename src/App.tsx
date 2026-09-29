@@ -7,6 +7,7 @@ import { Dashboard } from './modules/dashboard/Dashboard';
 import { Settings } from './modules/settings/Settings';
 import { Inventory } from './modules/inventory/Inventory';
 import { NetworkStatus } from './components/NetworkStatus';
+import { ToastHost } from './components/ToastHost';
 import { isOnboardingCompleted } from './lib/storage';
 import { startAutoSync } from './offline/syncEngine';
 
@@ -34,17 +35,21 @@ export function App() {
 
   if (!onboarded) {
     return (
-      <OnboardingWizard
-        onComplete={() => {
-          setOnboarded(true);
-          startAutoSync();
-        }}
-      />
+      <>
+        <ToastHost />
+        <OnboardingWizard
+          onComplete={() => {
+            setOnboarded(true);
+            startAutoSync();
+          }}
+        />
+      </>
     );
   }
 
   return (
     <div class="app-shell">
+      <ToastHost />
       <NetworkStatus />
       <Router>
         <Route path="/" component={Dashboard} />
