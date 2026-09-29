@@ -100,6 +100,8 @@ interface CubaPOSDB extends DBSchema {
   outbox: { key: string; value: any };
 }
 
+const ACTIVE_SHIFT_KEY = 'active_shift_id';
+
 let dbPromise: Promise<IDBPDatabase<CubaPOSDB>> | null = null;
 
 export function getDB() {
@@ -219,19 +221,37 @@ export async function getAllMovements(): Promise<InventoryMovement[]> {
 }
 
 export async function getOpenShift(): Promise<Shift | undefined> {
-  const db = await getDB();
-  const all = await db.getAll('shifts');
-  return all.find(s => s.status === 'open');
+  try {
+    const db = await getDB();
+    if (!db.objectStoreNames.contains('shifts')) return undefined;
+    const all = await db.getAll('shifts');
+    const open = all.find(s => s.status === 'open');
+    if (open) return open;
+
+    // Respaldo por Preferences
+    const { value } = await Preferences.get({ key: ACTIVE_SHIFT_KEY });
+    if (value) {
+      const s = await db.get('shifts', value);
+      if (s && s.status === 'open') return s;
+    }
+  } catch (e) {
+    console.error('getOpenShift', e);
+  }
+  return undefined;
 }
 
 export async function getAllShifts(): Promise<Shift[]> {
   const db = await getDB();
+  if (!db.objectStoreNames.contains('shifts')) return [];
   return (await db.getAll('shifts')).sort((a, b) => b.openedAt - a.openedAt);
 }
 
 export async function openShift(openingFloatCUP: number = 0, openingFloatUSD: number = 0): Promise<Shift> {
   const existing = await getOpenShift();
-  if (existing) return existing;
+  if (existing) {
+    await Preferences.set({ key: ACTIVE_SHIFT_KEY, value: existing.id });
+    return existing;
+  }
   const floatCUP = Number(openingFloatCUP);
   const floatUSD = Number(openingFloatUSD);
   const shift: Shift = {
@@ -243,6 +263,7 @@ export async function openShift(openingFloatCUP: number = 0, openingFloatUSD: nu
   };
   const db = await getDB();
   await db.put('shifts', shift);
+  await Preferences.set({ key: ACTIVE_SHIFT_KEY, value: shift.id });
   return shift;
 }
 
@@ -254,11 +275,19 @@ export async function closeShift(shiftId: string): Promise<void> {
     shift.closedAt = Date.now();
     await db.put('shifts', shift);
   }
+  const { value } = await Preferences.get({ key: ACTIVE_SHIFT_KEY });
+  if (value === shiftId || value) {
+    await Preferences.remove({ key: ACTIVE_SHIFT_KEY });
+  }
 }
 
+/** Cierra el turno abierto sin necesidad de conocer el id */
 export async function closeOpenShift(): Promise<Shift | null> {
   const open = await getOpenShift();
-  if (!open) return null;
+  if (!open) {
+    await Preferences.remove({ key: ACTIVE_SHIFT_KEY });
+    return null;
+  }
   await closeShift(open.id);
   return { ...open, status: 'closed', closedAt: Date.now() };
 }
