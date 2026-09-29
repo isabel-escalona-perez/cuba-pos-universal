@@ -1,5 +1,6 @@
 import { Preferences } from '@capacitor/preferences';
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
+import { newId } from './id';
 
 export interface Product {
   id: string;
@@ -143,7 +144,7 @@ export async function saveSettings(settings: AppSettings) {
 
 export async function addToOutbox(operation: any) {
   const db = await getDB();
-  const id = operation.id || crypto.randomUUID();
+  const id = operation.id || newId();
   await db.put('outbox', { ...operation, id, createdAt: operation.createdAt || Date.now() });
 }
 
@@ -208,14 +209,17 @@ export async function getOpenShift(): Promise<Shift | undefined> {
   return all.find(s => s.status === 'open');
 }
 
-export async function openShift(openingFloatCUP: number, openingFloatUSD = 0): Promise<Shift> {
+/** Abre turno. Fondo puede ser 0. */
+export async function openShift(openingFloatCUP: number = 0, openingFloatUSD: number = 0): Promise<Shift> {
   const existing = await getOpenShift();
   if (existing) return existing;
+  const floatCUP = Number(openingFloatCUP);
+  const floatUSD = Number(openingFloatUSD);
   const shift: Shift = {
-    id: crypto.randomUUID(),
+    id: newId(),
     openedAt: Date.now(),
-    openingFloatCUP,
-    openingFloatUSD,
+    openingFloatCUP: Number.isFinite(floatCUP) ? Math.max(0, floatCUP) : 0,
+    openingFloatUSD: Number.isFinite(floatUSD) ? Math.max(0, floatUSD) : 0,
     status: 'open',
   };
   const db = await getDB();
@@ -266,7 +270,7 @@ export async function getShiftSalesTotalCUP(shiftId: string, rate = 120): Promis
 export async function deductStockForSale(items: SaleItem[]) {
   for (const item of items) {
     await addMovement({
-      id: crypto.randomUUID(),
+      id: newId(),
       productId: item.id,
       type: 'out',
       quantity: item.qty,
