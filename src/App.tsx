@@ -6,6 +6,7 @@ import { CashCounter } from './modules/cash/CashCounter';
 import { Dashboard } from './modules/dashboard/Dashboard';
 import { Settings } from './modules/settings/Settings';
 import { Inventory } from './modules/inventory/Inventory';
+import { Stats } from './modules/stats/Stats';
 import { NetworkStatus } from './components/NetworkStatus';
 import { ToastHost } from './components/ToastHost';
 import { isOnboardingCompleted } from './lib/storage';
@@ -55,6 +56,7 @@ export function App() {
         <Route path="/" component={Dashboard} />
         <Route path="/pos" component={POS} />
         <Route path="/inventory" component={Inventory} />
+        <Route path="/stats" component={Stats} />
         <Route path="/cash" component={CashCounter} />
         <Route path="/settings" component={Settings} />
       </Router>
@@ -62,6 +64,7 @@ export function App() {
         <a href="/">Inicio</a>
         <a href="/pos">POS</a>
         <a href="/inventory">Inventario</a>
+        <a href="/stats">Stats</a>
         <a href="/cash">Arqueo</a>
         <a href="/settings">Ajustes</a>
       </nav>
