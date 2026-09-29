@@ -42,8 +42,10 @@ export function POS() {
       const list = await getAllProducts();
       setProducts(list.filter(p => p.active !== false));
       const shift = await getOpenShift();
-      setShiftOpen(!!shift);
-      if (!shift) setShowOpenShift(true);
+      const isOpen = !!shift;
+      setShiftOpen(isOpen);
+      if (!isOpen) setShowOpenShift(true);
+      else setShowOpenShift(false);
       const s = await getSettings();
       if (s.rateUSDToCUP) setRate(s.rateUSDToCUP);
       if (s.businessName) setBusinessName(s.businessName);
@@ -122,6 +124,7 @@ export function POS() {
     try {
       const shift = await getOpenShift();
       if (!shift) {
+        setShiftOpen(false);
         showToast('No hay turno abierto', 'info');
         return;
       }
@@ -146,11 +149,11 @@ export function POS() {
     if (closing) return;
     setClosing(true);
     try {
-      await closeOpenShift();
+      const closed = await closeOpenShift();
       setShiftOpen(false);
       setShowCloseShift(false);
       setCart([]);
-      showToast('Turno cerrado', 'ok');
+      showToast(closed ? 'Turno cerrado' : 'No había turno abierto', closed ? 'ok' : 'info');
     } catch (e) {
       console.error(e);
       showToast('No se pudo cerrar el turno', 'error');
@@ -235,14 +238,21 @@ export function POS() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100% - 60px)' }}>
-      <div
-        class={shiftOpen ? 'shift-banner' : 'shift-banner closed'}
-        onClick={() => { if (!shiftOpen) setShowOpenShift(true); }}
-        style={{ cursor: shiftOpen ? 'default' : 'pointer' }}
-      >
-        {shiftOpen
-          ? '● Turno abierto – puedes vender'
-          : '○ Turno cerrado – toca aquí para abrir (fondo 0 permitido)'}
+      {/* Banner + acciones de turno siempre visibles arriba */}
+      <div class={shiftOpen ? 'shift-banner' : 'shift-banner closed'} style={{ flexShrink: 0 }}>
+        {shiftOpen ? '● Turno abierto – puedes vender' : '○ Turno cerrado'}
+      </div>
+
+      <div style={{ padding: '8px 12px', flexShrink: 0, background: '#fff', borderBottom: '1px solid var(--border)' }}>
+        {shiftOpen ? (
+          <button type="button" class="btn btn-danger btn-block" onClick={prepareCloseShift}>
+            Cerrar turno
+          </button>
+        ) : (
+          <button type="button" class="btn btn-block" onClick={() => setShowOpenShift(true)}>
+            Abrir turno de caja
+          </button>
+        )}
       </div>
 
       <div class="card" style={{ flex: 1, overflow: 'auto', marginBottom: 0 }}>
@@ -253,18 +263,6 @@ export function POS() {
             <button type="button" class={`btn btn-sm ${currency === 'USD' ? '' : 'btn-secondary'}`} onClick={() => setCurrency('USD')}>USD</button>
           </div>
         </div>
-
-        {!shiftOpen && (
-          <button type="button" class="btn btn-block" style={{ marginBottom: 12 }} onClick={() => setShowOpenShift(true)}>
-            Abrir turno de caja
-          </button>
-        )}
-
-        {shiftOpen && (
-          <button type="button" class="btn btn-secondary btn-block" style={{ marginBottom: 12 }} onClick={prepareCloseShift}>
-            Cerrar turno
-          </button>
-        )}
 
         <input class="input" placeholder="Buscar producto, SKU o código…" value={search}
           onInput={e => setSearch((e.target as HTMLInputElement).value)} style={{ marginBottom: 10 }} />
@@ -364,9 +362,6 @@ export function POS() {
               <p>Ventas: <strong>{shiftSummary.salesCount}</strong></p>
               <p>Total vendido: <strong>{shiftSummary.totalCUP.toFixed(0)} CUP</strong></p>
             </div>
-            <p class="muted" style={{ marginBottom: 12 }}>
-              Después puedes hacer el arqueo en la pestaña Arqueo para contar el efectivo.
-            </p>
             <div class="grid-2">
               <button type="button" class="btn btn-secondary" onClick={() => setShowCloseShift(false)} disabled={closing}>Cancelar</button>
               <button type="button" class="btn btn-danger" onClick={doCloseShift} disabled={closing}>
