@@ -1,19 +1,6 @@
 import { Preferences } from '@capacitor/preferences';
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 
-interface CubaPOSDB extends DBSchema {
-  settings: { key: string; value: any };
-  products: {
-    key: string;
-    value: Product;
-    indexes: { 'by-sku': string; 'by-barcode': string };
-  };
-  sales: { key: string; value: any };
-  cashCounts: { key: string; value: any };
-  inventoryMovements: { key: string; value: InventoryMovement };
-  outbox: { key: string; value: any };
-}
-
 export interface Product {
   id: string;
   name: string;
@@ -43,11 +30,65 @@ export interface InventoryMovement {
   synced?: boolean;
 }
 
+export interface SaleItem {
+  id: string;
+  name: string;
+  priceCUP: number;
+  priceUSD: number;
+  qty: number;
+}
+
+export interface Sale {
+  id: string;
+  shiftId?: string;
+  items: SaleItem[];
+  currency: 'CUP' | 'USD';
+  subtotal: number;
+  discount: number;
+  total: number;
+  paidCUP: number;
+  paidUSD: number;
+  changeCUP: number;
+  paymentMethod: string;
+  createdAt: number;
+}
+
+export interface Shift {
+  id: string;
+  openedAt: number;
+  closedAt?: number;
+  openingFloatCUP: number;
+  openingFloatUSD: number;
+  status: 'open' | 'closed';
+  notes?: string;
+}
+
+export interface AppSettings {
+  businessName?: string;
+  businessPhone?: string;
+  rateUSDToCUP?: number;
+  ticketFooter?: string;
+}
+
+interface CubaPOSDB extends DBSchema {
+  settings: { key: string; value: any };
+  products: {
+    key: string;
+    value: Product;
+    indexes: { 'by-sku': string; 'by-barcode': string };
+  };
+  sales: { key: string; value: Sale };
+  cashCounts: { key: string; value: any };
+  inventoryMovements: { key: string; value: InventoryMovement };
+  shifts: { key: string; value: Shift };
+  outbox: { key: string; value: any };
+}
+
 let dbPromise: Promise<IDBPDatabase<CubaPOSDB>> | null = null;
 
 export function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<CubaPOSDB>('cuba-pos-v2', 2, {
+    dbPromise = openDB<CubaPOSDB>('cuba-pos-v3', 3, {
       upgrade(db, oldVersion) {
         if (oldVersion < 1) {
           db.createObjectStore('settings');
@@ -63,13 +104,17 @@ export function getDB() {
             db.createObjectStore('inventoryMovements', { keyPath: 'id' });
           }
         }
+        if (oldVersion < 3) {
+          if (!db.objectStoreNames.contains('shifts')) {
+            db.createObjectStore('shifts', { keyPath: 'id' });
+          }
+        }
       },
     });
   }
   return dbPromise;
 }
 
-// ---------- Onboarding / Settings ----------
 export async function isOnboardingCompleted(): Promise<boolean> {
   const { value } = await Preferences.get({ key: 'onboarding_done' });
   return value === 'true';
@@ -85,17 +130,17 @@ export async function saveFiscalProfile(profile: any) {
   await Preferences.set({ key: 'fiscal_profile', value: JSON.stringify(profile) });
 }
 
-export async function getSettings() {
+export async function getSettings(): Promise<AppSettings> {
   const db = await getDB();
-  return (await db.get('settings', 'app_settings')) || {};
+  return ((await db.get('settings', 'app_settings')) as AppSettings) || {};
 }
 
-export async function saveSettings(settings: any) {
+export async function saveSettings(settings: AppSettings) {
   const db = await getDB();
-  await db.put('settings', settings, 'app_settings');
+  const current = await getSettings();
+  await db.put('settings', { ...current, ...settings }, 'app_settings');
 }
 
-// ---------- Outbox ----------
 export async function addToOutbox(operation: any) {
   const db = await getDB();
   const id = operation.id || crypto.randomUUID();
@@ -112,7 +157,6 @@ export async function removeFromOutbox(id: string) {
   await db.delete('outbox', id);
 }
 
-// ---------- Products ----------
 export async function getAllProducts(): Promise<Product[]> {
   const db = await getDB();
   return db.getAll('products');
@@ -134,17 +178,14 @@ export async function deleteProduct(id: string) {
   await db.delete('products', id);
 }
 
-// ---------- Inventory Movements ----------
 export async function addMovement(mov: InventoryMovement) {
   const db = await getDB();
   await db.put('inventoryMovements', mov);
-
-  // Actualizar stock del producto
   const product = await db.get('products', mov.productId);
   if (product) {
     if (mov.type === 'in') product.stock += mov.quantity;
-    else if (mov.type === 'out') product.stock -= mov.quantity;
-    else if (mov.type === 'adjust') product.stock = mov.quantity; // ajuste absoluto
+    else if (mov.type === 'out') product.stock = Math.max(0, product.stock - mov.quantity);
+    else if (mov.type === 'adjust') product.stock = mov.quantity;
     product.updatedAt = Date.now();
     await db.put('products', product);
   }
@@ -158,6 +199,97 @@ export async function getMovementsByProduct(productId: string): Promise<Inventor
 
 export async function getAllMovements(): Promise<InventoryMovement[]> {
   const db = await getDB();
-  const all = await db.getAll('inventoryMovements');
-  return all.sort((a, b) => b.createdAt - a.createdAt);
+  return (await db.getAll('inventoryMovements')).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function getOpenShift(): Promise<Shift | undefined> {
+  const db = await getDB();
+  const all = await db.getAll('shifts');
+  return all.find(s => s.status === 'open');
+}
+
+export async function openShift(openingFloatCUP: number, openingFloatUSD = 0): Promise<Shift> {
+  const existing = await getOpenShift();
+  if (existing) return existing;
+  const shift: Shift = {
+    id: crypto.randomUUID(),
+    openedAt: Date.now(),
+    openingFloatCUP,
+    openingFloatUSD,
+    status: 'open',
+  };
+  const db = await getDB();
+  await db.put('shifts', shift);
+  return shift;
+}
+
+export async function closeShift(shiftId: string): Promise<void> {
+  const db = await getDB();
+  const shift = await db.get('shifts', shiftId);
+  if (shift) {
+    shift.status = 'closed';
+    shift.closedAt = Date.now();
+    await db.put('shifts', shift);
+  }
+}
+
+export async function saveSale(sale: Sale) {
+  const db = await getDB();
+  await db.put('sales', sale);
+}
+
+export async function getAllSales(): Promise<Sale[]> {
+  const db = await getDB();
+  return (await db.getAll('sales')).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function getSalesForShift(shiftId: string): Promise<Sale[]> {
+  const all = await getAllSales();
+  return all.filter(s => s.shiftId === shiftId);
+}
+
+export async function getTodaySales(): Promise<Sale[]> {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const all = await getAllSales();
+  return all.filter(s => s.createdAt >= start.getTime());
+}
+
+export async function getShiftSalesTotalCUP(shiftId: string, rate = 120): Promise<number> {
+  const sales = await getSalesForShift(shiftId);
+  return sales.reduce((sum, s) => {
+    if (s.currency === 'CUP') return sum + s.total;
+    return sum + s.total * rate;
+  }, 0);
+}
+
+export async function deductStockForSale(items: SaleItem[]) {
+  for (const item of items) {
+    await addMovement({
+      id: crypto.randomUUID(),
+      productId: item.id,
+      type: 'out',
+      quantity: item.qty,
+      reason: 'Venta',
+      createdAt: Date.now(),
+    });
+  }
+}
+
+export async function getLowStockProducts(): Promise<Product[]> {
+  const products = await getAllProducts();
+  return products.filter(p => p.active !== false && p.stock <= (p.minStock ?? 0));
+}
+
+export async function getDashboardStats(rate = 120) {
+  const today = await getTodaySales();
+  const salesCount = today.length;
+  const totalCUP = today.reduce((sum, s) => {
+    if (s.currency === 'CUP') return sum + s.total;
+    return sum + s.total * rate;
+  }, 0);
+  const avgTicket = salesCount > 0 ? totalCUP / salesCount : 0;
+  const lowStock = await getLowStockProducts();
+  const openShift = await getOpenShift();
+  return { salesCount, totalCUP, avgTicket, lowStockCount: lowStock.length, openShift };
 }
