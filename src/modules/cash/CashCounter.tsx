@@ -1,38 +1,44 @@
-import { useState, useMemo } from 'preact/hooks';
+import { useState, useMemo, useEffect } from 'preact/hooks';
 import { enqueue } from '../../offline/syncEngine';
+import {
+  getOpenShift, getShiftSalesTotalCUP, closeShift, getSettings,
+} from '../../lib/storage';
+import { showToast } from '../../lib/toast';
 
 const CUP_DENOMS = [
-  { value: 1000, label: '1000 CUP' },
-  { value: 500, label: '500 CUP' },
-  { value: 200, label: '200 CUP' },
-  { value: 100, label: '100 CUP' },
-  { value: 50, label: '50 CUP' },
-  { value: 20, label: '20 CUP' },
-  { value: 10, label: '10 CUP' },
-  { value: 5, label: '5 CUP' },
-  { value: 3, label: '3 CUP' },
-  { value: 1, label: '1 CUP' },
-  { value: 0.05, label: '5 cent' },
-  { value: 0.01, label: '1 cent' },
+  { value: 1000, label: '1000' }, { value: 500, label: '500' }, { value: 200, label: '200' },
+  { value: 100, label: '100' }, { value: 50, label: '50' }, { value: 20, label: '20' },
+  { value: 10, label: '10' }, { value: 5, label: '5' }, { value: 3, label: '3' },
+  { value: 1, label: '1' }, { value: 0.05, label: '5¢' }, { value: 0.01, label: '1¢' },
 ];
 
 const USD_DENOMS = [
-  { value: 100, label: '100 USD' },
-  { value: 50, label: '50 USD' },
-  { value: 20, label: '20 USD' },
-  { value: 10, label: '10 USD' },
-  { value: 5, label: '5 USD' },
-  { value: 1, label: '1 USD' },
-  { value: 0.25, label: '25 ¢' },
-  { value: 0.10, label: '10 ¢' },
-  { value: 0.05, label: '5 ¢' },
-  { value: 0.01, label: '1 ¢' },
+  { value: 100, label: '100' }, { value: 50, label: '50' }, { value: 20, label: '20' },
+  { value: 10, label: '10' }, { value: 5, label: '5' }, { value: 1, label: '1' },
+  { value: 0.25, label: '25¢' }, { value: 0.10, label: '10¢' }, { value: 0.05, label: '5¢' },
+  { value: 0.01, label: '1¢' },
 ];
 
 export function CashCounter() {
   const [currency, setCurrency] = useState<'CUP' | 'USD'>('CUP');
   const [counts, setCounts] = useState<Record<number, number>>({});
   const [expected, setExpected] = useState(0);
+  const [shiftId, setShiftId] = useState<string | null>(null);
+  const [openingFloat, setOpeningFloat] = useState(0);
+
+  useEffect(() => {
+    (async () => {
+      const shift = await getOpenShift();
+      const s = await getSettings();
+      const rate = s.rateUSDToCUP || 120;
+      if (shift) {
+        setShiftId(shift.id);
+        setOpeningFloat(shift.openingFloatCUP);
+        const salesCUP = await getShiftSalesTotalCUP(shift.id, rate);
+        setExpected(Math.round((shift.openingFloatCUP + salesCUP) * 100) / 100);
+      }
+    })();
+  }, []);
 
   const denoms = currency === 'CUP' ? CUP_DENOMS : USD_DENOMS;
 
@@ -41,15 +47,16 @@ export function CashCounter() {
   }, [counts, currency]);
 
   const diff = total - expected;
-  const status = Math.abs(diff) < 0.01 ? 'ok' : Math.abs(diff) < 50 ? 'warn' : 'bad';
+  const status = Math.abs(diff) < 0.05 ? 'ok' : Math.abs(diff) < 50 ? 'warn' : 'bad';
 
   const setQty = (value: number, qty: number) => {
     setCounts(prev => ({ ...prev, [value]: Math.max(0, qty) }));
   };
 
-  const save = async () => {
+  const save = async (andClose: boolean) => {
     const count = {
       id: crypto.randomUUID(),
+      shiftId,
       currency,
       total,
       expected,
@@ -58,7 +65,13 @@ export function CashCounter() {
       createdAt: Date.now(),
     };
     await enqueue('cash_count', count);
-    alert(`Arqueo guardado offline\nTotal: ${total.toFixed(2)} ${currency}\nDiferencia: ${diff.toFixed(2)}`);
+    if (andClose && shiftId) {
+      await closeShift(shiftId);
+      showToast('Arqueo guardado y turno cerrado', 'ok');
+      setShiftId(null);
+    } else {
+      showToast(`Arqueo guardado · dif. ${diff >= 0 ? '+' : ''}${diff.toFixed(2)} ${currency}`, 'ok');
+    }
   };
 
   return (
@@ -66,16 +79,23 @@ export function CashCounter() {
       <div class="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ fontSize: 18 }}>Arqueo de caja</h2>
-          <div class="grid-2" style={{ width: 140 }}>
-            <button class={`btn ${currency === 'CUP' ? '' : 'btn-secondary'}`} style={{ padding: '8px' }}
+          <div class="grid-2" style={{ width: 130 }}>
+            <button class={`btn btn-sm ${currency === 'CUP' ? '' : 'btn-secondary'}`}
               onClick={() => { setCurrency('CUP'); setCounts({}); }}>CUP</button>
-            <button class={`btn ${currency === 'USD' ? '' : 'btn-secondary'}`} style={{ padding: '8px' }}
+            <button class={`btn btn-sm ${currency === 'USD' ? '' : 'btn-secondary'}`}
               onClick={() => { setCurrency('USD'); setCounts({}); }}>USD</button>
           </div>
         </div>
+        {shiftId ? (
+          <p class="muted" style={{ marginTop: 8 }}>
+            Turno abierto · Fondo inicial {openingFloat} CUP · Esperado rellenado con ventas del turno
+          </p>
+        ) : (
+          <p class="muted" style={{ marginTop: 8 }}>No hay turno abierto. Puedes arquear igual o abrir turno en POS.</p>
+        )}
 
         <div style={{ margin: '12px 0' }}>
-          <label style={{ fontSize: 14 }}>Monto esperado del turno</label>
+          <label class="muted">Monto esperado ({currency})</label>
           <input class="input" type="number" value={expected || ''}
             onInput={e => setExpected(parseFloat((e.target as HTMLInputElement).value) || 0)}
             placeholder="0.00" />
@@ -85,15 +105,13 @@ export function CashCounter() {
       <div class="card">
         {denoms.map(d => (
           <div key={d.value} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <span style={{ width: 90, fontWeight: 600 }}>{d.label}</span>
-            <button class="btn btn-secondary" style={{ padding: '8px 14px', minHeight: 40 }}
-              onClick={() => setQty(d.value, (counts[d.value] || 0) - 1)}>−</button>
-            <input class="input" style={{ width: 70, textAlign: 'center', minHeight: 40 }}
+            <span style={{ width: 48, fontWeight: 600 }}>{d.label}</span>
+            <button class="btn btn-secondary btn-sm" onClick={() => setQty(d.value, (counts[d.value] || 0) - 1)}>−</button>
+            <input class="input" style={{ width: 64, textAlign: 'center', minHeight: 40 }}
               type="number" min="0" value={counts[d.value] || 0}
               onInput={e => setQty(d.value, parseInt((e.target as HTMLInputElement).value) || 0)} />
-            <button class="btn btn-secondary" style={{ padding: '8px 14px', minHeight: 40 }}
-              onClick={() => setQty(d.value, (counts[d.value] || 0) + 1)}>+</button>
-            <span style={{ marginLeft: 'auto', fontWeight: 600 }}>
+            <button class="btn btn-secondary btn-sm" onClick={() => setQty(d.value, (counts[d.value] || 0) + 1)}>+</button>
+            <span style={{ marginLeft: 'auto', fontWeight: 600, minWidth: 70, textAlign: 'right' }}>
               {((counts[d.value] || 0) * d.value).toFixed(2)}
             </span>
           </div>
@@ -101,7 +119,7 @@ export function CashCounter() {
       </div>
 
       <div class="card" style={{
-        background: status === 'ok' ? '#dcfce7' : status === 'warn' ? '#fef3c7' : '#fee2e2'
+        background: status === 'ok' ? '#dcfce7' : status === 'warn' ? '#fef3c7' : '#fee2e2',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700 }}>
           <span>Total contado</span>
@@ -109,13 +127,21 @@ export function CashCounter() {
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
           <span>Diferencia</span>
-          <span style={{ fontWeight: 700, color: status === 'ok' ? 'var(--success)' : status === 'warn' ? 'var(--warning)' : 'var(--danger)' }}>
+          <span style={{
+            fontWeight: 700,
+            color: status === 'ok' ? 'var(--success)' : status === 'warn' ? 'var(--warning)' : 'var(--danger)',
+          }}>
             {diff >= 0 ? '+' : ''}{diff.toFixed(2)} {currency}
           </span>
         </div>
-        <button class="btn btn-block" style={{ marginTop: 16 }} onClick={save}>
+        <button class="btn btn-block" style={{ marginTop: 12 }} onClick={() => save(false)}>
           Guardar arqueo
         </button>
+        {shiftId && (
+          <button class="btn btn-secondary btn-block" style={{ marginTop: 8 }} onClick={() => save(true)}>
+            Guardar y cerrar turno
+          </button>
+        )}
       </div>
     </div>
   );
