@@ -34,6 +34,7 @@ export function POS() {
   const [paidUSD, setPaidUSD] = useState(0);
   const [rate, setRate] = useState(120);
   const [businessName, setBusinessName] = useState('Cuba POS');
+  const [ticketFooter, setTicketFooter] = useState('Gracias por su compra');
   const [lastReceipt, setLastReceipt] = useState('');
   const [showReceipt, setShowReceipt] = useState(false);
 
@@ -49,6 +50,7 @@ export function POS() {
       const s = await getSettings();
       if (s.rateUSDToCUP) setRate(s.rateUSDToCUP);
       if (s.businessName) setBusinessName(s.businessName);
+      setTicketFooter(s.ticketFooter?.trim() || 'Gracias por su compra');
     } catch (e) {
       console.error(e);
       showToast('Error al cargar datos', 'error');
@@ -125,6 +127,7 @@ export function POS() {
       const shift = await getOpenShift();
       if (!shift) {
         setShiftOpen(false);
+        setShowCloseShift(false);
         showToast('No hay turno abierto', 'info');
         return;
       }
@@ -135,7 +138,7 @@ export function POS() {
       setShiftSummary({
         salesCount: sales.length,
         totalCUP,
-        floatCUP: shift.openingFloatCUP,
+        floatCUP: shift.openingFloatCUP ?? 0,
         openedAt: shift.openedAt,
       });
       setShowCloseShift(true);
@@ -154,6 +157,8 @@ export function POS() {
       setShowCloseShift(false);
       setCart([]);
       showToast(closed ? 'Turno cerrado' : 'No había turno abierto', closed ? 'ok' : 'info');
+      // Refrescar estado desde IndexedDB para evitar desync
+      await reload();
     } catch (e) {
       console.error(e);
       showToast('No se pudo cerrar el turno', 'error');
@@ -210,6 +215,10 @@ export function POS() {
       await deductStockForSale(sale.items);
       await enqueue('sale', sale);
 
+      // Leer pie de ticket actualizado por si cambió en otra pestaña
+      const s = await getSettings();
+      const footer = s.ticketFooter?.trim() || ticketFooter || 'Gracias por su compra';
+
       const lines = [
         businessName,
         new Date(sale.createdAt).toLocaleString('es-CU'),
@@ -221,7 +230,7 @@ export function POS() {
         paidCUP > 0 ? `Pagado CUP: ${paidCUP.toFixed(2)}` : '',
         paidUSD > 0 ? `Pagado USD: ${paidUSD.toFixed(2)}` : '',
         changeAmount > 0 ? `Cambio: ${changeAmount.toFixed(2)} ${currency}` : '',
-        'Gracias por su compra',
+        footer,
       ].filter(Boolean).join('\n');
 
       setLastReceipt(lines);
@@ -245,8 +254,8 @@ export function POS() {
 
       <div style={{ padding: '8px 12px', flexShrink: 0, background: '#fff', borderBottom: '1px solid var(--border)' }}>
         {shiftOpen ? (
-          <button type="button" class="btn btn-danger btn-block" onClick={prepareCloseShift}>
-            Cerrar turno
+          <button type="button" class="btn btn-danger btn-block" onClick={prepareCloseShift} disabled={closing}>
+            {closing ? 'Cerrando…' : 'Cerrar turno'}
           </button>
         ) : (
           <button type="button" class="btn btn-block" onClick={() => setShowOpenShift(true)}>
@@ -317,7 +326,7 @@ export function POS() {
       </div>
 
       {showOpenShift && (
-        <div class="modal-backdrop">
+        <div class="modal-backdrop" onClick={() => { if (shiftOpen) setShowOpenShift(false); }}>
           <div class="modal-sheet" onClick={e => e.stopPropagation()}>
             <h2 style={{ fontSize: 18, marginBottom: 8 }}>Abrir turno de caja</h2>
             <p class="muted" style={{ marginBottom: 12 }}>
@@ -352,8 +361,8 @@ export function POS() {
       )}
 
       {showCloseShift && (
-        <div class="modal-backdrop">
-          <div class="modal-sheet">
+        <div class="modal-backdrop" onClick={() => !closing && setShowCloseShift(false)}>
+          <div class="modal-sheet" onClick={e => e.stopPropagation()}>
             <h2 style={{ fontSize: 18, marginBottom: 8 }}>Cerrar turno</h2>
             <p class="muted" style={{ marginBottom: 12 }}>Resumen del turno actual antes de cerrar.</p>
             <div style={{ background: '#f8fafc', borderRadius: 10, padding: 12, marginBottom: 12 }}>
@@ -374,7 +383,7 @@ export function POS() {
 
       {showPay && (
         <div class="modal-backdrop">
-          <div class="modal-sheet">
+          <div class="modal-sheet" onClick={e => e.stopPropagation()}>
             <h2 style={{ fontSize: 18, marginBottom: 4 }}>Cobrar</h2>
             <p style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>{total.toFixed(2)} {currency}</p>
             <label class="muted">Descuento ({currency})</label>
@@ -409,7 +418,7 @@ export function POS() {
 
       {showReceipt && (
         <div class="modal-backdrop">
-          <div class="modal-sheet">
+          <div class="modal-sheet" onClick={e => e.stopPropagation()}>
             <h2 style={{ fontSize: 18, marginBottom: 8 }}>Ticket</h2>
             <pre style={{
               whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 13,
