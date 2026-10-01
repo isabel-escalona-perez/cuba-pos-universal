@@ -225,8 +225,9 @@ export async function getOpenShift(): Promise<Shift | undefined> {
     const db = await getDB();
     if (!db.objectStoreNames.contains('shifts')) return undefined;
     const all = await db.getAll('shifts');
-    const open = all.find(s => s.status === 'open');
-    if (open) return open;
+    // Preferir el turno más reciente abierto
+    const openList = all.filter(s => s.status === 'open').sort((a, b) => b.openedAt - a.openedAt);
+    if (openList.length > 0) return openList[0];
 
     // Respaldo por Preferences
     const { value } = await Preferences.get({ key: ACTIVE_SHIFT_KEY });
@@ -270,26 +271,50 @@ export async function openShift(openingFloatCUP: number = 0, openingFloatUSD: nu
 export async function closeShift(shiftId: string): Promise<void> {
   const db = await getDB();
   const shift = await db.get('shifts', shiftId);
-  if (shift) {
-    shift.status = 'closed';
-    shift.closedAt = Date.now();
-    await db.put('shifts', shift);
+  if (shift && shift.status !== 'closed') {
+    // Actualización inmutable (evita problemas de referencia en idb)
+    const closed: Shift = {
+      ...shift,
+      status: 'closed',
+      closedAt: Date.now(),
+    };
+    await db.put('shifts', closed);
   }
-  const { value } = await Preferences.get({ key: ACTIVE_SHIFT_KEY });
-  if (value === shiftId || value) {
+  try {
     await Preferences.remove({ key: ACTIVE_SHIFT_KEY });
+  } catch (e) {
+    console.error('Preferences.remove ACTIVE_SHIFT_KEY', e);
   }
 }
 
-/** Cierra el turno abierto sin necesidad de conocer el id */
+/** Cierra todos los turnos abiertos (por si hubiera más de uno por desync) */
 export async function closeOpenShift(): Promise<Shift | null> {
-  const open = await getOpenShift();
-  if (!open) {
-    await Preferences.remove({ key: ACTIVE_SHIFT_KEY });
+  const db = await getDB();
+  if (!db.objectStoreNames.contains('shifts')) {
+    await Preferences.remove({ key: ACTIVE_SHIFT_KEY }).catch(() => {});
     return null;
   }
-  await closeShift(open.id);
-  return { ...open, status: 'closed', closedAt: Date.now() };
+
+  const all = await db.getAll('shifts');
+  const openList = all.filter(s => s.status === 'open');
+  if (openList.length === 0) {
+    await Preferences.remove({ key: ACTIVE_SHIFT_KEY }).catch(() => {});
+    return null;
+  }
+
+  // Ordenar por más reciente y cerrar todos
+  openList.sort((a, b) => b.openedAt - a.openedAt);
+  const now = Date.now();
+  let primary: Shift | null = null;
+
+  for (const s of openList) {
+    const closed: Shift = { ...s, status: 'closed', closedAt: now };
+    await db.put('shifts', closed);
+    if (!primary) primary = closed;
+  }
+
+  await Preferences.remove({ key: ACTIVE_SHIFT_KEY }).catch(() => {});
+  return primary;
 }
 
 export async function saveSale(sale: Sale) {
